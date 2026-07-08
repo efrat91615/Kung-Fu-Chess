@@ -203,6 +203,82 @@ class SelectionManager:
 
 
 # ---------------------------------------------------------------------------
+# Piece hierarchy (imported here to keep main.py self-contained when run flat)
+# ---------------------------------------------------------------------------
+
+from abc import ABC, abstractmethod
+
+
+class ChessPiece(ABC):
+    def __init__(self, color: str) -> None:
+        self.color = color
+
+    @abstractmethod
+    def is_valid_move(self, fr: int, fc: int, tr: int, tc: int, board: list) -> bool: ...
+
+    @staticmethod
+    def _clear_straight(fr, fc, tr, tc, board):
+        rs = 0 if tr == fr else (1 if tr > fr else -1)
+        cs = 0 if tc == fc else (1 if tc > fc else -1)
+        r, c = fr + rs, fc + cs
+        while (r, c) != (tr, tc):
+            if board[r][c] != ".": return False
+            r += rs; c += cs
+        return True
+
+    @staticmethod
+    def _clear_diagonal(fr, fc, tr, tc, board):
+        rs = 1 if tr > fr else -1
+        cs = 1 if tc > fc else -1
+        r, c = fr + rs, fc + cs
+        while (r, c) != (tr, tc):
+            if board[r][c] != ".": return False
+            r += rs; c += cs
+        return True
+
+
+class King(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        return max(abs(tr - fr), abs(tc - fc)) == 1
+
+
+class Rook(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        if fr != tr and fc != tc: return False
+        return self._clear_straight(fr, fc, tr, tc, board)
+
+
+class Bishop(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        if abs(tr - fr) != abs(tc - fc) or abs(tr - fr) == 0: return False
+        return self._clear_diagonal(fr, fc, tr, tc, board)
+
+
+class Queen(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        dr, dc = abs(tr - fr), abs(tc - fc)
+        if dr == 0 and dc == 0: return False
+        if dr == 0 or dc == 0: return self._clear_straight(fr, fc, tr, tc, board)
+        if dr == dc: return self._clear_diagonal(fr, fc, tr, tc, board)
+        return False
+
+
+class Knight(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        dr, dc = abs(tr - fr), abs(tc - fc)
+        return (dr == 2 and dc == 1) or (dr == 1 and dc == 2)
+
+
+_KIND_MAP: dict[str, type] = {"K": King, "R": Rook, "B": Bishop, "Q": Queen, "N": Knight}
+
+
+def _piece_from_token(token: str) -> Optional[ChessPiece]:
+    if token == "." or len(token) != 2: return None
+    cls = _KIND_MAP.get(token[1])
+    return cls(token[0]) if cls else None
+
+
+# ---------------------------------------------------------------------------
 # Mock game engine (plug in your real engine here)
 # ---------------------------------------------------------------------------
 
@@ -226,9 +302,13 @@ class MockBoard:
     def print_board(self) -> str:
         return "\n".join(" ".join(row) for row in self._rows)
 
+    @property
+    def rows(self) -> list[list[str]]:
+        return self._rows
+
 
 class MockGameEngine:
-    """Minimal engine: applies moves immediately and advances a clock."""
+    """Engine: validates moves via piece rules before applying them."""
 
     def __init__(self, board: MockBoard) -> None:
         self._board = board
@@ -239,6 +319,23 @@ class MockGameEngine:
         return self._board
 
     def send_move_request(self, request: MoveRequest) -> None:
+        fr, fc = request.from_cell.row, request.from_cell.col
+        tr, tc = request.to_cell.row,   request.to_cell.col
+        rows = self._board.rows
+
+        piece = _piece_from_token(rows[fr][fc])
+        if piece is None:
+            return  # no piece at source
+
+        # Rule 1: cannot capture a friendly piece
+        dest_token = rows[tr][tc]
+        if dest_token != "." and dest_token[0] == piece.color:
+            return
+
+        # Rule 2: delegate movement validation to the piece
+        if not piece.is_valid_move(fr, fc, tr, tc, rows):
+            return
+
         self._board.apply_move(request.from_cell, request.to_cell)
 
     def advance_clock(self, delta_ms: int) -> None:
