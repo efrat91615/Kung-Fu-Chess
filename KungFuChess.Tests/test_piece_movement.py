@@ -287,3 +287,233 @@ class TestPieceFactory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# ---------------------------------------------------------------------------
+# Path obstruction — enemy AND friendly intermediate blockers
+# ---------------------------------------------------------------------------
+
+class TestPathObstruction(unittest.TestCase):
+
+    def test_rook_blocked_by_enemy_intermediate(self):
+        b = make_board([
+            [".", ".", ".", "."],
+            [".", ".", ".", "."],
+            ["wR", "bP", ".", "."],   # enemy bP at (2,1) blocks path to (2,3)
+            [".", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Rook("w"), 2, 0, 2, 3, b))
+        self.assertEqual(b, before)
+
+    def test_rook_blocked_by_friendly_intermediate(self):
+        b = make_board([
+            [".", ".", ".", "."],
+            [".", ".", ".", "."],
+            ["wR", "wP", ".", "."],   # friendly wP at (2,1) blocks path to (2,3)
+            [".", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Rook("w"), 2, 0, 2, 3, b))
+        self.assertEqual(b, before)
+
+    def test_bishop_blocked_by_enemy_intermediate(self):
+        b = make_board([
+            [".", ".", ".", ".", "."],
+            [".", ".", ".", ".", "."],
+            [".", ".", "wB", ".", "."],
+            [".", ".", ".", "bP", "."],  # enemy bP at (3,3) blocks diagonal to (4,4)
+            [".", ".", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Bishop("w"), 2, 2, 4, 4, b))
+        self.assertEqual(b, before)
+
+    def test_bishop_blocked_by_friendly_intermediate(self):
+        b = make_board([
+            [".", ".", ".", ".", "."],
+            [".", ".", ".", ".", "."],
+            [".", ".", "wB", ".", "."],
+            [".", ".", ".", "wP", "."],  # friendly wP at (3,3) blocks diagonal to (4,4)
+            [".", ".", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Bishop("w"), 2, 2, 4, 4, b))
+        self.assertEqual(b, before)
+
+    def test_queen_blocked_straight_by_enemy_intermediate(self):
+        b = make_board([
+            [".", ".", ".", ".", "."],
+            [".", ".", ".", ".", "."],
+            ["wQ", ".", "bP", ".", "."],  # enemy bP at (2,2) blocks path to (2,4)
+            [".", ".", ".", ".", "."],
+            [".", ".", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Queen("w"), 2, 0, 2, 4, b))
+        self.assertEqual(b, before)
+
+    def test_knight_jumps_over_enemy_intermediate(self):
+        b = make_board([
+            [".", ".", ".", ".", "."],
+            [".", ".", "bP", ".", "."],   # enemy in the "path" area
+            [".", "bP", "wN", "bP", "."],
+            [".", ".", "bP", ".", "."],
+            [".", ".", ".", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Knight("w"), 2, 2, 0, 3, b))
+        self.assertEqual(b[0][3], "wN")
+        self.assertEqual(b[2][2], ".")
+
+    def test_knight_jumps_over_friendly_intermediate(self):
+        b = make_board([
+            [".", ".", ".", ".", "."],
+            [".", ".", "wP", ".", "."],   # friendly in the "path" area
+            [".", "wP", "wN", "wP", "."],
+            [".", ".", "wP", ".", "."],
+            [".", ".", ".", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Knight("w"), 2, 2, 0, 3, b))
+        self.assertEqual(b[0][3], "wN")
+
+
+# ---------------------------------------------------------------------------
+# Engine helper: full move pipeline (friendly-dest check + is_valid_move)
+# ---------------------------------------------------------------------------
+
+def engine_move(rows: list[list[str]], fr: int, fc: int, tr: int, tc: int) -> bool:
+    """
+    Simulate the engine's full move pipeline:
+      1. Reject if destination has a friendly piece.
+      2. Validate via piece.is_valid_move().
+      3. Apply move (capture or normal) only if both pass.
+    Returns True if the move was applied.
+    """
+    piece = piece_from_token(rows[fr][fc])
+    if piece is None:
+        return False
+    dest = rows[tr][tc]
+    if dest != "." and dest[0] == piece.color:
+        return False
+    if not piece.is_valid_move(fr, fc, tr, tc, rows):
+        return False
+    rows[tr][tc] = rows[fr][fc]
+    rows[fr][fc] = "."
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Destination cell rules: friendly rejection & enemy capture
+# ---------------------------------------------------------------------------
+
+class TestDestinationRules(unittest.TestCase):
+
+    # --- Friendly destination: move must be completely ignored ---
+
+    def test_cannot_land_rook_on_friendly_piece(self):
+        b = make_board([
+            ["wR", ".", "wB"],
+            [".",  ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 0, 0, 0, 2))
+        self.assertEqual(b, before)
+
+    def test_cannot_land_king_on_friendly_piece(self):
+        b = make_board([
+            ["wK", "wR"],
+            [".",  "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 0, 0, 0, 1))
+        self.assertEqual(b, before)
+
+    def test_cannot_land_knight_on_friendly_piece(self):
+        b = make_board([
+            [".", "wP", "."],
+            [".", ".",  "."],
+            ["wN", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 2, 0, 0, 1))
+        self.assertEqual(b, before)
+
+    def test_cannot_land_bishop_on_friendly_piece(self):
+        b = make_board([
+            ["wP", ".", "."],
+            [".",  ".", "."],
+            [".",  ".", "wB"],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 2, 2, 0, 0))
+        self.assertEqual(b, before)
+
+    def test_cannot_land_queen_on_friendly_piece(self):
+        b = make_board([
+            [".", ".", ".", "wR"],
+            [".", ".", ".", "."],
+            [".", ".", ".", "."],
+            ["wQ", ".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 3, 0, 0, 3))
+        self.assertEqual(b, before)
+
+    # --- Enemy capture: enemy removed, attacker occupies the cell ---
+
+    def test_rook_captures_enemy(self):
+        b = make_board([
+            ["wR", ".", "bP"],
+            [".",  ".", "."],
+        ])
+        self.assertTrue(engine_move(b, 0, 0, 0, 2))
+        self.assertEqual(b[0][2], "wR")
+        self.assertEqual(b[0][0], ".")
+
+    def test_bishop_captures_enemy(self):
+        b = make_board([
+            [".",  ".", "bP"],
+            [".",  ".", "."],
+            ["wB", ".", "."],
+        ])
+        self.assertTrue(engine_move(b, 2, 0, 0, 2))
+        self.assertEqual(b[0][2], "wB")
+        self.assertEqual(b[2][0], ".")
+
+    def test_knight_captures_enemy(self):
+        b = make_board([
+            [".", "bQ", "."],
+            [".", ".",  "."],
+            ["wN", ".", "."],
+        ])
+        self.assertTrue(engine_move(b, 2, 0, 0, 1))
+        self.assertEqual(b[0][1], "wN")
+        self.assertEqual(b[2][0], ".")
+
+    def test_king_captures_enemy(self):
+        b = make_board([
+            ["wK", "bR"],
+            [".",  "."],
+        ])
+        self.assertTrue(engine_move(b, 0, 0, 0, 1))
+        self.assertEqual(b[0][1], "wK")
+        self.assertEqual(b[0][0], ".")
+
+    def test_queen_captures_enemy_diagonally(self):
+        b = make_board([
+            ["bN", ".", "."],
+            [".",  ".", "."],
+            [".",  ".", "wQ"],
+        ])
+        self.assertTrue(engine_move(b, 2, 2, 0, 0))
+        self.assertEqual(b[0][0], "wQ")
+        self.assertEqual(b[2][2], ".")
+
+    def test_captured_piece_fully_removed(self):
+        b = make_board([
+            ["wR", ".", "bK"],
+            [".",  ".", "."],
+        ])
+        engine_move(b, 0, 0, 0, 2)
+        flat = [cell for row in b for cell in row]
+        self.assertNotIn("bK", flat)
+        self.assertEqual(b[0][2], "wR")
