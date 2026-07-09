@@ -429,14 +429,19 @@ class GameEngine:
     # ------------------------------------------------------------------
 
     def _resolve_pending(self) -> None:
-        still_pending: list[PendingMove] = []
-        for pm in self._pending:
-            if pm.arrival_ms <= self._clock_ms:
-                # Clear source and place piece at destination
-                self._board.set_token(pm.from_cell, ".")
+        arrived   = [pm for pm in self._pending if pm.arrival_ms <= self._clock_ms]
+        still_pending = [pm for pm in self._pending if pm.arrival_ms >  self._clock_ms]
+
+        arrived.sort(key=lambda pm: pm.arrival_ms)
+
+        for pm in arrived:
+            self._board.set_token(pm.from_cell, ".")
+            dest_token = self._board.get_token(pm.to_cell)
+            if dest_token == "." or dest_token[0] != pm.token[0]:
+                # Empty or enemy — land (captures enemy automatically)
                 self._board.set_token(pm.to_cell, pm.token)
-            else:
-                still_pending.append(pm)
+            # Friendly occupies destination — piece is lost (do not place)
+
         self._pending = still_pending
 
 
