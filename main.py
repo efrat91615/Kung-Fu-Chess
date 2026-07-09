@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from abc import ABC, abstractmethod
 from typing import Optional, Sequence, TextIO
 
 
@@ -74,6 +75,7 @@ class BoardValidator:
 # ---------------------------------------------------------------------------
 
 CELL_SIZE_PX = 100
+MS_PER_CELL  = 1000  # each cell of distance takes 1000 ms to traverse
 
 
 class Cell:
@@ -87,6 +89,10 @@ class Cell:
     def from_pixels(x: int, y: int) -> "Cell":
         return Cell(row=y // CELL_SIZE_PX, col=x // CELL_SIZE_PX)
 
+    def chebyshev(self, other: "Cell") -> int:
+        """Max of row/col deltas — number of 'steps' a king would take."""
+        return max(abs(self.row - other.row), abs(self.col - other.col))
+
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Cell) and self.row == other.row and self.col == other.col
 
@@ -95,6 +101,7 @@ class Cell:
 
 
 class Piece:
+    """Lightweight token wrapper used by the board grid and input layer."""
     __slots__ = ("token",)
 
     def __init__(self, token: str) -> None:
@@ -113,10 +120,30 @@ class MoveRequest:
 
     def __init__(self, from_cell: Cell, to_cell: Cell) -> None:
         self.from_cell = from_cell
-        self.to_cell = to_cell
+        self.to_cell   = to_cell
 
     def __repr__(self) -> str:
         return f"MoveRequest({self.from_cell} -> {self.to_cell})"
+
+
+class PendingMove:
+    """
+    A validated move that is in-flight.
+
+    The piece has logically left its source cell but has not yet
+    arrived at the destination.  The settled board shows the source
+    as empty and the destination unchanged until arrival_ms is reached.
+    """
+    __slots__ = ("token", "from_cell", "to_cell", "arrival_ms")
+
+    def __init__(self, token: str, from_cell: Cell, to_cell: Cell, arrival_ms: int) -> None:
+        self.token      = token
+        self.from_cell  = from_cell
+        self.to_cell    = to_cell
+        self.arrival_ms = arrival_ms
+
+    def __repr__(self) -> str:
+        return f"PendingMove({self.token} {self.from_cell}->{self.to_cell} @{self.arrival_ms}ms)"
 
 
 # ---------------------------------------------------------------------------
@@ -172,47 +199,8 @@ class CommandParser:
 
 
 # ---------------------------------------------------------------------------
-# Selection manager
+# Piece hierarchy
 # ---------------------------------------------------------------------------
-
-class SelectionManager:
-    def __init__(self) -> None:
-        self._selected: Optional[Cell] = None
-        self._selected_color: Optional[str] = None
-
-    @property
-    def selected_cell(self) -> Optional[Cell]:
-        return self._selected
-
-    def handle_click(
-        self,
-        cell: Cell,
-        piece: Optional[Piece],
-        active_player: str,
-        on_move: "callable",
-    ) -> None:
-        if self._selected is None:
-            # Select any piece that is clicked
-            if piece is not None:
-                self._selected = cell
-                self._selected_color = piece.color
-        else:
-            # If clicking another piece of the same color, switch selection
-            if piece is not None and piece.color == self._selected_color:
-                self._selected = cell
-                self._selected_color = piece.color
-            else:
-                on_move(MoveRequest(from_cell=self._selected, to_cell=cell))
-                self._selected = None
-                self._selected_color = None
-
-
-# ---------------------------------------------------------------------------
-# Piece hierarchy (imported here to keep main.py self-contained when run flat)
-# ---------------------------------------------------------------------------
-
-from abc import ABC, abstractmethod
-
 
 class ChessPiece(ABC):
     def __init__(self, color: str) -> None:
@@ -227,8 +215,10 @@ class ChessPiece(ABC):
         cs = 0 if tc == fc else (1 if tc > fc else -1)
         r, c = fr + rs, fc + cs
         while (r, c) != (tr, tc):
-            if board[r][c] != ".": return False
-            r += rs; c += cs
+            if board[r][c] != ".":
+                return False
+            r += rs
+            c += cs
         return True
 
     @staticmethod
@@ -237,8 +227,10 @@ class ChessPiece(ABC):
         cs = 1 if tc > fc else -1
         r, c = fr + rs, fc + cs
         while (r, c) != (tr, tc):
-            if board[r][c] != ".": return False
-            r += rs; c += cs
+            if board[r][c] != ".":
+                return False
+            r += rs
+            c += cs
         return True
 
 
@@ -249,22 +241,27 @@ class King(ChessPiece):
 
 class Rook(ChessPiece):
     def is_valid_move(self, fr, fc, tr, tc, board):
-        if fr != tr and fc != tc: return False
+        if fr != tr and fc != tc:
+            return False
         return self._clear_straight(fr, fc, tr, tc, board)
 
 
 class Bishop(ChessPiece):
     def is_valid_move(self, fr, fc, tr, tc, board):
-        if abs(tr - fr) != abs(tc - fc) or abs(tr - fr) == 0: return False
+        if abs(tr - fr) != abs(tc - fc) or abs(tr - fr) == 0:
+            return False
         return self._clear_diagonal(fr, fc, tr, tc, board)
 
 
 class Queen(ChessPiece):
     def is_valid_move(self, fr, fc, tr, tc, board):
         dr, dc = abs(tr - fr), abs(tc - fc)
-        if dr == 0 and dc == 0: return False
-        if dr == 0 or dc == 0: return self._clear_straight(fr, fc, tr, tc, board)
-        if dr == dc: return self._clear_diagonal(fr, fc, tr, tc, board)
+        if dr == 0 and dc == 0:
+            return False
+        if dr == 0 or dc == 0:
+            return self._clear_straight(fr, fc, tr, tc, board)
+        if dr == dc:
+            return self._clear_diagonal(fr, fc, tr, tc, board)
         return False
 
 
@@ -289,24 +286,39 @@ class Pawn(ChessPiece):
         return False
 
 
-_KIND_MAP: dict[str, type] = {"K": King, "R": Rook, "B": Bishop, "Q": Queen, "N": Knight, "P": Pawn}
+_KIND_MAP: dict[str, type] = {
+    "K": King, "R": Rook, "B": Bishop,
+    "Q": Queen, "N": Knight, "P": Pawn,
+}
 
 
 def _piece_from_token(token: str) -> Optional[ChessPiece]:
-    if token == "." or len(token) != 2: return None
+    if token == "." or len(token) != 2:
+        return None
     cls = _KIND_MAP.get(token[1])
     return cls(token[0]) if cls else None
 
 
 # ---------------------------------------------------------------------------
-# Mock game engine (plug in your real engine here)
+# Board  (settled state only)
 # ---------------------------------------------------------------------------
 
-class MockBoard:
-    """Wraps the parsed token grid; fulfils the BoardInterface contract."""
+class Board:
+    """
+    Holds only the *settled* grid — pieces that have fully arrived.
+
+    Pieces that are in-flight (PendingMove) are NOT shown here;
+    their source cell was already cleared when the move was accepted.
+    """
 
     def __init__(self, rows: list[list[str]]) -> None:
         self._rows = rows
+
+    def get_token(self, cell: Cell) -> str:
+        return self._rows[cell.row][cell.col]
+
+    def set_token(self, cell: Cell, token: str) -> None:
+        self._rows[cell.row][cell.col] = token
 
     def get_piece_at(self, cell: Cell) -> Optional[Piece]:
         token = self._rows[cell.row][cell.col]
@@ -314,10 +326,6 @@ class MockBoard:
 
     def is_within_bounds(self, cell: Cell) -> bool:
         return 0 <= cell.row < len(self._rows) and 0 <= cell.col < len(self._rows[0])
-
-    def apply_move(self, from_cell: Cell, to_cell: Cell) -> None:
-        self._rows[to_cell.row][to_cell.col] = self._rows[from_cell.row][from_cell.col]
-        self._rows[from_cell.row][from_cell.col] = "."
 
     def print_board(self) -> str:
         return "\n".join(" ".join(row) for row in self._rows)
@@ -327,39 +335,124 @@ class MockBoard:
         return self._rows
 
 
-class MockGameEngine:
-    """Engine: validates moves via piece rules before applying them."""
+# ---------------------------------------------------------------------------
+# Game Engine  (movement-over-time)
+# ---------------------------------------------------------------------------
 
-    def __init__(self, board: MockBoard) -> None:
-        self._board = board
-        self._clock_ms: int = 0
+class GameEngine:
+    """
+    Validates moves, schedules them as PendingMoves, and resolves
+    them when advance_clock() is called.
+
+    Invariant
+    ---------
+    A piece's source cell is cleared *immediately* when a move is
+    accepted (so the piece cannot be moved twice).  The destination
+    cell is updated only when arrival_ms <= current clock.
+    """
+
+    def __init__(self, board: Board) -> None:
+        self._board    = board
+        self._clock_ms = 0
+        self._pending: list[PendingMove] = []
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     @property
-    def board(self) -> MockBoard:
+    def board(self) -> Board:
         return self._board
+
+    @property
+    def clock_ms(self) -> int:
+        return self._clock_ms
 
     def send_move_request(self, request: MoveRequest) -> None:
         fr, fc = request.from_cell.row, request.from_cell.col
         tr, tc = request.to_cell.row,   request.to_cell.col
-        rows = self._board.rows
+        rows   = self._board.rows
 
         piece = _piece_from_token(rows[fr][fc])
         if piece is None:
-            return  # no piece at source
+            return
 
-        # Rule 1: cannot capture a friendly piece
+        if not self._board.is_within_bounds(request.to_cell):
+            return
+
         dest_token = rows[tr][tc]
         if dest_token != "." and dest_token[0] == piece.color:
             return
 
-        # Rule 2: delegate movement validation to the piece
         if not piece.is_valid_move(fr, fc, tr, tc, rows):
             return
 
-        self._board.apply_move(request.from_cell, request.to_cell)
+        # Reject if this piece is already in-flight
+        for pm in self._pending:
+            if pm.from_cell == request.from_cell:
+                return
+
+        token = rows[fr][fc]
+        distance   = request.from_cell.chebyshev(request.to_cell)
+        arrival_ms = self._clock_ms + distance * MS_PER_CELL
+
+        self._pending.append(
+            PendingMove(token, request.from_cell, request.to_cell, arrival_ms)
+        )
 
     def advance_clock(self, delta_ms: int) -> None:
+        """Advance simulation time and resolve any moves that have arrived."""
         self._clock_ms += delta_ms
+        self._resolve_pending()
+
+    # ------------------------------------------------------------------
+    # Private
+    # ------------------------------------------------------------------
+
+    def _resolve_pending(self) -> None:
+        still_pending: list[PendingMove] = []
+        for pm in self._pending:
+            if pm.arrival_ms <= self._clock_ms:
+                # Clear source and place piece at destination
+                self._board.set_token(pm.from_cell, ".")
+                self._board.set_token(pm.to_cell, pm.token)
+            else:
+                still_pending.append(pm)
+        self._pending = still_pending
+
+
+# ---------------------------------------------------------------------------
+# Selection manager
+# ---------------------------------------------------------------------------
+
+class SelectionManager:
+    def __init__(self) -> None:
+        self._selected:       Optional[Cell] = None
+        self._selected_color: Optional[str]  = None
+
+    @property
+    def selected_cell(self) -> Optional[Cell]:
+        return self._selected
+
+    def handle_click(
+        self,
+        cell:         Cell,
+        piece:        Optional[Piece],
+        active_player: str,
+        on_move:      "callable",
+    ) -> None:
+        if self._selected is None:
+            if piece is not None:
+                self._selected       = cell
+                self._selected_color = piece.color
+        else:
+            if piece is not None and piece.color == self._selected_color:
+                self._selected       = cell
+                self._selected_color = piece.color
+            else:
+                on_move(MoveRequest(from_cell=self._selected, to_cell=cell))
+                self._selected       = None
+                self._selected_color = None
 
 
 # ---------------------------------------------------------------------------
@@ -369,15 +462,15 @@ class MockGameEngine:
 class InputHandler:
     def __init__(
         self,
-        engine: MockGameEngine,
+        engine:        GameEngine,
         active_player: str = "w",
-        writer: Optional[TextIO] = None,
+        writer:        Optional[TextIO] = None,
     ) -> None:
-        self._engine = engine
+        self._engine        = engine
         self._active_player = active_player
-        self._writer = writer or sys.stdout
-        self._parser = CommandParser()
-        self._selection = SelectionManager()
+        self._writer        = writer or sys.stdout
+        self._parser        = CommandParser()
+        self._selection     = SelectionManager()
 
     def process_line(self, line: str) -> None:
         stripped = line.strip()
@@ -408,10 +501,8 @@ class InputHandler:
 
 def main() -> int:
     try:
-        all_lines = sys.stdin.read().splitlines()
-
-        # Split into Board section and Commands section
-        board_lines: list[str] = []
+        all_lines    = sys.stdin.read().splitlines()
+        board_lines: list[str]   = []
         command_lines: list[str] = []
         in_commands = False
 
@@ -431,7 +522,7 @@ def main() -> int:
         rows = BoardReader(io.StringIO("\n".join(board_lines))).read_board()
         BoardValidator().validate(rows)
 
-        engine = MockGameEngine(MockBoard(rows))
+        engine  = GameEngine(Board(rows))
         handler = InputHandler(engine, active_player="w", writer=sys.stdout)
 
         for line in command_lines:
