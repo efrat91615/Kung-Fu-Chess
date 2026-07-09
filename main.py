@@ -178,6 +178,7 @@ class CommandParser:
 class SelectionManager:
     def __init__(self) -> None:
         self._selected: Optional[Cell] = None
+        self._selected_color: Optional[str] = None
 
     @property
     def selected_cell(self) -> Optional[Cell]:
@@ -190,16 +191,20 @@ class SelectionManager:
         active_player: str,
         on_move: "callable",
     ) -> None:
-        is_friendly = piece is not None and piece.color == active_player
         if self._selected is None:
-            if is_friendly:
+            # Select any piece that is clicked
+            if piece is not None:
                 self._selected = cell
+                self._selected_color = piece.color
         else:
-            if is_friendly:
+            # If clicking another piece of the same color, switch selection
+            if piece is not None and piece.color == self._selected_color:
                 self._selected = cell
+                self._selected_color = piece.color
             else:
                 on_move(MoveRequest(from_cell=self._selected, to_cell=cell))
                 self._selected = None
+                self._selected_color = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +274,22 @@ class Knight(ChessPiece):
         return (dr == 2 and dc == 1) or (dr == 1 and dc == 2)
 
 
-_KIND_MAP: dict[str, type] = {"K": King, "R": Rook, "B": Bishop, "Q": Queen, "N": Knight}
+class Pawn(ChessPiece):
+    def is_valid_move(self, fr, fc, tr, tc, board):
+        direction = -1 if self.color == "w" else 1
+        dr = tr - fr
+        dc = abs(tc - fc)
+        if dr != direction:
+            return False
+        dest = board[tr][tc]
+        if dc == 0:
+            return dest == "."
+        if dc == 1:
+            return dest != "." and dest[0] != self.color
+        return False
+
+
+_KIND_MAP: dict[str, type] = {"K": King, "R": Rook, "B": Bishop, "Q": Queen, "N": Knight, "P": Pawn}
 
 
 def _piece_from_token(token: str) -> Optional[ChessPiece]:

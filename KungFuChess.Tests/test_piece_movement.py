@@ -517,3 +517,268 @@ class TestDestinationRules(unittest.TestCase):
         flat = [cell for row in b for cell in row]
         self.assertNotIn("bK", flat)
         self.assertEqual(b[0][2], "wR")
+
+
+# ---------------------------------------------------------------------------
+# Pawn
+# ---------------------------------------------------------------------------
+
+from KungFuChess.pieces import Pawn
+
+
+class TestPawnWhite(unittest.TestCase):
+
+    # --- Forward movement ---
+
+    def test_white_pawn_moves_one_step_up(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Pawn("w"), 1, 1, 0, 1, b))
+        self.assertEqual(b[0][1], "wP")
+        self.assertEqual(b[1][1], ".")
+
+    def test_white_pawn_cannot_move_down(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 1, 1, 2, 1, b))
+        self.assertEqual(b, before)
+
+    def test_white_pawn_cannot_move_two_steps(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 2, 1, 0, 1, b))
+        self.assertEqual(b, before)
+
+    def test_white_pawn_blocked_by_friendly(self):
+        b = make_board([
+            [".", "wR", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 1, 1, 0, 1, b))
+        self.assertEqual(b, before)
+
+    def test_white_pawn_blocked_by_enemy(self):
+        b = make_board([
+            [".", "bR", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 1, 1, 0, 1, b))
+        self.assertEqual(b, before)
+
+    # --- Diagonal capture ---
+
+    def test_white_pawn_captures_enemy_diagonally(self):
+        b = make_board([
+            [".", ".", "bN"],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Pawn("w"), 1, 1, 0, 2, b))
+        self.assertEqual(b[0][2], "wP")
+        self.assertEqual(b[1][1], ".")
+
+    def test_white_pawn_cannot_capture_diagonally_empty(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 1, 1, 0, 2, b))
+        self.assertEqual(b, before)
+
+    def test_white_pawn_cannot_capture_friendly_diagonally(self):
+        b = make_board([
+            [".", ".", "wR"],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("w"), 1, 1, 0, 2, b))
+        self.assertEqual(b, before)
+
+
+class TestPawnBlack(unittest.TestCase):
+
+    # --- Forward movement ---
+
+    def test_black_pawn_moves_one_step_down(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Pawn("b"), 1, 1, 2, 1, b))
+        self.assertEqual(b[2][1], "bP")
+        self.assertEqual(b[1][1], ".")
+
+    def test_black_pawn_cannot_move_up(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 0, 1, b))
+        self.assertEqual(b, before)
+
+    def test_black_pawn_cannot_move_two_steps(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", ".", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 3, 1, b))
+        self.assertEqual(b, before)
+
+    def test_black_pawn_blocked_by_friendly(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", "bR", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 2, 1, b))
+        self.assertEqual(b, before)
+
+    def test_black_pawn_blocked_by_enemy(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", "wR", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 2, 1, b))
+        self.assertEqual(b, before)
+
+    # --- Diagonal capture ---
+
+    def test_black_pawn_captures_enemy_diagonally(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            ["wN", ".", "."],
+        ])
+        self.assertTrue(apply_if_valid(Pawn("b"), 1, 1, 2, 0, b))
+        self.assertEqual(b[2][0], "bP")
+        self.assertEqual(b[1][1], ".")
+
+    def test_black_pawn_cannot_capture_diagonally_empty(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 2, 0, b))
+        self.assertEqual(b, before)
+
+    def test_black_pawn_cannot_capture_friendly_diagonally(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "bP", "."],
+            ["bR", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(apply_if_valid(Pawn("b"), 1, 1, 2, 0, b))
+        self.assertEqual(b, before)
+
+
+class TestPawnEngineIntegration(unittest.TestCase):
+    """Verify illegal pawn moves are silently ignored by the engine pipeline."""
+
+    def test_engine_ignores_white_pawn_moving_backward(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 1, 1, 2, 1))
+        self.assertEqual(b, before)
+
+    def test_engine_ignores_white_pawn_two_steps(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 2, 1, 0, 1))
+        self.assertEqual(b, before)
+
+    def test_engine_ignores_pawn_forward_into_enemy(self):
+        b = make_board([
+            [".", "bR", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 1, 1, 0, 1))
+        self.assertEqual(b, before)
+
+    def test_engine_ignores_pawn_diagonal_into_empty(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 1, 1, 0, 2))
+        self.assertEqual(b, before)
+
+    def test_engine_applies_valid_white_pawn_move(self):
+        b = make_board([
+            [".", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        self.assertTrue(engine_move(b, 1, 1, 0, 1))
+        self.assertEqual(b[0][1], "wP")
+        self.assertEqual(b[1][1], ".")
+
+    def test_engine_applies_pawn_capture(self):
+        # forward into enemy is blocked (pawn cannot capture forward)
+        b = make_board([
+            [".", "bN", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        self.assertFalse(engine_move(b, 1, 1, 0, 1))
+        # diagonal capture of the same enemy piece succeeds
+        b2 = make_board([
+            ["bN", ".", "."],
+            [".", "wP", "."],
+            [".", ".", "."],
+        ])
+        self.assertTrue(engine_move(b2, 1, 1, 0, 0))
+        self.assertEqual(b2[0][0], "wP")
+
+    def test_engine_ignores_black_pawn_two_steps(self):
+        b = make_board([
+            [".", "bP", "."],
+            [".", ".", "."],
+            [".", ".", "."],
+        ])
+        before = snapshot(b)
+        self.assertFalse(engine_move(b, 0, 1, 2, 1))
+        self.assertEqual(b, before)

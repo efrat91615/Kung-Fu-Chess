@@ -119,6 +119,36 @@ class Knight(ChessPiece):
         return (dr == 2 and dc == 1) or (dr == 1 and dc == 2)
 
 
+class Pawn(ChessPiece):
+    """
+    Simplified pawn rules (no 2-cell start, no en passant, no promotion).
+
+    White ('w'): moves upward   (to_row = from_row - 1)
+    Black ('b'): moves downward (to_row = from_row + 1)
+
+    Forward move  (dc == 0): destination must be empty.
+    Diagonal capture (|dc| == 1): destination must contain an enemy piece.
+    """
+
+    def is_valid_move(self, from_row, from_col, to_row, to_col, board):
+        direction = -1 if self.color == "w" else 1
+        dr = to_row - from_row
+        dc = abs(to_col - from_col)
+
+        if dr != direction:          # must move exactly 1 row in the correct direction
+            return False
+
+        dest = board[to_row][to_col]
+
+        if dc == 0:                  # forward move: destination must be empty
+            return dest == "."
+
+        if dc == 1:                  # diagonal capture: destination must have an enemy
+            return dest != "." and dest[0] != self.color
+
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Factory: token string -> ChessPiece instance
 # ---------------------------------------------------------------------------
@@ -129,6 +159,7 @@ _KIND_MAP: dict[str, type[ChessPiece]] = {
     "B": Bishop,
     "Q": Queen,
     "N": Knight,
+    "P": Pawn,
 }
 
 
