@@ -352,9 +352,10 @@ class GameEngine:
     """
 
     def __init__(self, board: Board) -> None:
-        self._board    = board
-        self._clock_ms = 0
-        self._pending: list[PendingMove] = []
+        self._board     = board
+        self._clock_ms  = 0
+        self._pending:  list[PendingMove] = []
+        self._game_over = False
 
     # ------------------------------------------------------------------
     # Public interface
@@ -367,6 +368,10 @@ class GameEngine:
     @property
     def clock_ms(self) -> int:
         return self._clock_ms
+
+    @property
+    def game_over(self) -> bool:
+        return self._game_over
 
     def is_in_flight(self, cell: Cell) -> bool:
         """Return True if a piece from this cell is currently in-flight."""
@@ -385,6 +390,9 @@ class GameEngine:
         return rows
 
     def send_move_request(self, request: MoveRequest) -> None:
+        if self._game_over:
+            return
+
         fr, fc = request.from_cell.row, request.from_cell.col
         tr, tc = request.to_cell.row,   request.to_cell.col
 
@@ -440,6 +448,8 @@ class GameEngine:
             if dest_token == "." or dest_token[0] != pm.token[0]:
                 # Empty or enemy — land (captures enemy automatically)
                 self._board.set_token(pm.to_cell, pm.token)
+                if len(dest_token) == 2 and dest_token[1] == "K":
+                    self._game_over = True
             # Friendly occupies destination — piece is lost (do not place)
 
         self._pending = still_pending
