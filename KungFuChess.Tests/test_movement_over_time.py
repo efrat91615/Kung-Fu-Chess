@@ -42,14 +42,17 @@ def request(fr, fc, tr, tc) -> MoveRequest:
 class TestMovementOverTime(unittest.TestCase):
 
     def test_source_cleared_immediately_after_accept(self):
-        """The source cell must be empty as soon as the move is accepted."""
+        """The piece stays visible at source while in-flight; cleared only on arrival."""
         engine = make_engine([
             [".", ".", "."],
             [".", "wR", "."],
             [".", ".", "."],
         ])
         engine.send_move_request(request(1, 1, 1, 2))
-        self.assertEqual(engine.board.get_token(Cell(1, 1)), ".")
+        # piece still visible at source (in-flight)
+        self.assertEqual(engine.board.get_token(Cell(1, 1)), "wR")
+        # but it is registered as in-flight
+        self.assertTrue(engine.is_in_flight(Cell(1, 1)))
 
     def test_destination_not_updated_before_arrival(self):
         """Before enough time passes the destination still shows its old value."""

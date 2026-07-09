@@ -368,13 +368,38 @@ class GameEngine:
     def clock_ms(self) -> int:
         return self._clock_ms
 
+    def is_in_flight(self, cell: Cell) -> bool:
+        """Return True if a piece from this cell is currently in-flight."""
+        return any(pm.from_cell == cell for pm in self._pending)
+
+    def _any_enemy_in_flight(self, color: str) -> bool:
+        """Return True if any piece of the opposite color is currently in-flight."""
+        return any(pm.token[0] != color for pm in self._pending)
+
+    def _logical_rows(self) -> list[list[str]]:
+        """Board rows with in-flight pieces removed from their source cells."""
+        import copy
+        rows = copy.deepcopy(self._board.rows)
+        for pm in self._pending:
+            rows[pm.from_cell.row][pm.from_cell.col] = "."
+        return rows
+
     def send_move_request(self, request: MoveRequest) -> None:
         fr, fc = request.from_cell.row, request.from_cell.col
         tr, tc = request.to_cell.row,   request.to_cell.col
-        rows   = self._board.rows
+
+        # Reject if this piece is already in-flight
+        if self.is_in_flight(request.from_cell):
+            return
+
+        rows = self._logical_rows()
 
         piece = _piece_from_token(rows[fr][fc])
         if piece is None:
+            return
+
+        # Reject if an enemy piece is already in-flight (common route rule)
+        if self._any_enemy_in_flight(piece.color):
             return
 
         if not self._board.is_within_bounds(request.to_cell):
@@ -387,17 +412,11 @@ class GameEngine:
         if not piece.is_valid_move(fr, fc, tr, tc, rows):
             return
 
-        # Reject if this piece is already in-flight
-        for pm in self._pending:
-            if pm.from_cell == request.from_cell:
-                return
-
-        token = rows[fr][fc]
         distance   = request.from_cell.chebyshev(request.to_cell)
         arrival_ms = self._clock_ms + distance * MS_PER_CELL
 
         self._pending.append(
-            PendingMove(token, request.from_cell, request.to_cell, arrival_ms)
+            PendingMove(rows[fr][fc], request.from_cell, request.to_cell, arrival_ms)
         )
 
     def advance_clock(self, delta_ms: int) -> None:
@@ -484,6 +503,9 @@ class InputHandler:
         if isinstance(cmd, ClickCommand):
             cell = Cell.from_pixels(cmd.x, cmd.y)
             if not self._engine.board.is_within_bounds(cell):
+                return
+            # Do not allow selecting or interacting with an in-flight piece
+            if self._engine.is_in_flight(cell):
                 return
             piece = self._engine.board.get_piece_at(cell)
             self._selection.handle_click(
