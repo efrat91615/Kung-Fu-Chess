@@ -76,6 +76,7 @@ class BoardValidator:
 
 CELL_SIZE_PX = 100
 MS_PER_CELL  = 1000  # each cell of distance takes 1000 ms to traverse
+JUMP_MS      = 1000  # a jump lasts 1000 ms
 
 
 class Cell:
@@ -146,6 +147,25 @@ class PendingMove:
         return f"PendingMove({self.token} {self.from_cell}->{self.to_cell} @{self.arrival_ms}ms)"
 
 
+class PendingJump:
+    """
+    A piece that is airborne over its own cell.
+
+    While airborne, any enemy moving piece that arrives at this cell
+    is captured by the jumping piece.  On land_ms the piece simply
+    returns to its cell (no board change needed).
+    """
+    __slots__ = ("token", "cell", "land_ms")
+
+    def __init__(self, token: str, cell: Cell, land_ms: int) -> None:
+        self.token   = token
+        self.cell    = cell
+        self.land_ms = land_ms
+
+    def __repr__(self) -> str:
+        return f"PendingJump({self.token} @{self.cell} lands@{self.land_ms}ms)"
+
+
 # ---------------------------------------------------------------------------
 # Command parser
 # ---------------------------------------------------------------------------
@@ -173,6 +193,14 @@ class PrintBoardCommand:
     pass
 
 
+class JumpCommand:
+    __slots__ = ("x", "y")
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+
 class CommandParser:
     def parse(self, line: str) -> object:
         parts = line.strip().split()
@@ -193,6 +221,13 @@ class CommandParser:
                 return WaitCommand(int(parts[1]))
             except ValueError:
                 raise CommandParseError("wait arg must be integer")
+        if verb == "jump":
+            if len(parts) != 3:
+                raise CommandParseError("jump expects 2 args")
+            try:
+                return JumpCommand(int(parts[1]), int(parts[2]))
+            except ValueError:
+                raise CommandParseError("jump args must be integers")
         if verb == "print" and len(parts) >= 2 and parts[1].lower() == "board":
             return PrintBoardCommand()
         raise CommandParseError(f"Unknown command: {line.strip()}")
@@ -273,16 +308,27 @@ class Knight(ChessPiece):
 
 class Pawn(ChessPiece):
     def is_valid_move(self, fr, fc, tr, tc, board):
-        direction = -1 if self.color == "w" else 1
+        direction  = -1 if self.color == "w" else 1
+        start_row  = len(board) - 1 if self.color == "w" else 0
         dr = tr - fr
         dc = abs(tc - fc)
-        if dr != direction:
+
+        if dc == 0:                  # forward move
+            if dr == direction and board[tr][tc] == ".":
+                return True
+            if (dr == 2 * direction
+                    and fr == start_row
+                    and board[fr + direction][fc] == "."
+                    and board[tr][tc] == "."):
+                return True
             return False
-        dest = board[tr][tc]
-        if dc == 0:
-            return dest == "."
-        if dc == 1:
+
+        if dc == 1:                  # diagonal capture
+            if dr != direction:
+                return False
+            dest = board[tr][tc]
             return dest != "." and dest[0] != self.color
+
         return False
 
 
@@ -355,6 +401,7 @@ class GameEngine:
         self._board     = board
         self._clock_ms  = 0
         self._pending:  list[PendingMove] = []
+        self._jumps:    list[PendingJump] = []
         self._game_over = False
 
     # ------------------------------------------------------------------
@@ -377,6 +424,10 @@ class GameEngine:
         """Return True if a piece from this cell is currently in-flight."""
         return any(pm.from_cell == cell for pm in self._pending)
 
+    def is_jumping(self, cell: Cell) -> bool:
+        """Return True if a piece on this cell is currently airborne."""
+        return any(pj.cell == cell for pj in self._jumps)
+
     def _any_enemy_in_flight(self, color: str) -> bool:
         """Return True if any piece of the opposite color is currently in-flight."""
         return any(pm.token[0] != color for pm in self._pending)
@@ -389,6 +440,18 @@ class GameEngine:
             rows[pm.from_cell.row][pm.from_cell.col] = "."
         return rows
 
+    def send_jump_request(self, cell: Cell) -> None:
+        if self._game_over:
+            return
+        if self.is_in_flight(cell):
+            return
+        if self.is_jumping(cell):
+            return
+        token = self._board.get_token(cell)
+        if token == ".":
+            return
+        self._jumps.append(PendingJump(token, cell, self._clock_ms + JUMP_MS))
+
     def send_move_request(self, request: MoveRequest) -> None:
         if self._game_over:
             return
@@ -396,8 +459,10 @@ class GameEngine:
         fr, fc = request.from_cell.row, request.from_cell.col
         tr, tc = request.to_cell.row,   request.to_cell.col
 
-        # Reject if this piece is already in-flight
+        # Reject if this piece is already in-flight or airborne
         if self.is_in_flight(request.from_cell):
+            return
+        if self.is_jumping(request.from_cell):
             return
 
         rows = self._logical_rows()
@@ -437,22 +502,44 @@ class GameEngine:
     # ------------------------------------------------------------------
 
     def _resolve_pending(self) -> None:
-        arrived   = [pm for pm in self._pending if pm.arrival_ms <= self._clock_ms]
+        arrived       = [pm for pm in self._pending if pm.arrival_ms <= self._clock_ms]
         still_pending = [pm for pm in self._pending if pm.arrival_ms >  self._clock_ms]
 
         arrived.sort(key=lambda pm: pm.arrival_ms)
 
         for pm in arrived:
             self._board.set_token(pm.from_cell, ".")
+
+            # Check if an airborne enemy is waiting at the destination
+            jumping_enemy = next(
+                (pj for pj in self._jumps
+                 if pj.cell == pm.to_cell
+                 and pj.token[0] != pm.token[0]
+                 and pj.land_ms >= pm.arrival_ms),
+                None,
+            )
+            if jumping_enemy is not None:
+                # Airborne piece captures the arriving mover — mover is removed
+                if len(pm.token) == 2 and pm.token[1] == "K":
+                    self._game_over = True
+                continue
+
             dest_token = self._board.get_token(pm.to_cell)
             if dest_token == "." or dest_token[0] != pm.token[0]:
-                # Empty or enemy — land (captures enemy automatically)
-                self._board.set_token(pm.to_cell, pm.token)
+                token = pm.token
+                if token[1] == "P":
+                    last_row = 0 if token[0] == "w" else len(self._board.rows) - 1
+                    if pm.to_cell.row == last_row:
+                        token = token[0] + "Q"
+                self._board.set_token(pm.to_cell, token)
                 if len(dest_token) == 2 and dest_token[1] == "K":
                     self._game_over = True
             # Friendly occupies destination — piece is lost (do not place)
 
         self._pending = still_pending
+
+        # Resolve landed jumps — piece is already on the board, nothing to write
+        self._jumps = [pj for pj in self._jumps if pj.land_ms > self._clock_ms]
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +613,10 @@ class InputHandler:
             self._selection.handle_click(
                 cell, piece, self._active_player, self._engine.send_move_request
             )
+        elif isinstance(cmd, JumpCommand):
+            cell = Cell.from_pixels(cmd.x, cmd.y)
+            if self._engine.board.is_within_bounds(cell):
+                self._engine.send_jump_request(cell)
         elif isinstance(cmd, WaitCommand):
             self._engine.advance_clock(cmd.ms)
         elif isinstance(cmd, PrintBoardCommand):

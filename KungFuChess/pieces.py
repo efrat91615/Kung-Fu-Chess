@@ -131,19 +131,25 @@ class Pawn(ChessPiece):
     """
 
     def is_valid_move(self, from_row, from_col, to_row, to_col, board):
-        direction = -1 if self.color == "w" else 1
+        direction  = -1 if self.color == "w" else 1
+        start_row  = len(board) - 1 if self.color == "w" else 0
         dr = to_row - from_row
         dc = abs(to_col - from_col)
 
-        if dr != direction:          # must move exactly 1 row in the correct direction
+        if dc == 0:                  # forward move
+            if dr == direction and board[to_row][to_col] == ".":
+                return True
+            if (dr == 2 * direction
+                    and from_row == start_row
+                    and board[from_row + direction][from_col] == "."
+                    and board[to_row][to_col] == "."):
+                return True
             return False
 
-        dest = board[to_row][to_col]
-
-        if dc == 0:                  # forward move: destination must be empty
-            return dest == "."
-
-        if dc == 1:                  # diagonal capture: destination must have an enemy
+        if dc == 1:                  # diagonal capture
+            if dr != direction:
+                return False
+            dest = board[to_row][to_col]
             return dest != "." and dest[0] != self.color
 
         return False

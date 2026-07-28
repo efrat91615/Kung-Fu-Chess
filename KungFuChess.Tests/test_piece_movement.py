@@ -774,11 +774,14 @@ class TestPawnEngineIntegration(unittest.TestCase):
         self.assertEqual(b2[0][0], "wP")
 
     def test_engine_ignores_black_pawn_two_steps(self):
+        # bP not on its start row (row 0 of a 4-row board is start,
+        # but here the pawn is on row 1 — not start row)
         b = make_board([
+            [".", ".", "."],
             [".", "bP", "."],
             [".", ".", "."],
             [".", ".", "."],
         ])
         before = snapshot(b)
-        self.assertFalse(engine_move(b, 0, 1, 2, 1))
+        self.assertFalse(engine_move(b, 1, 1, 3, 1))
         self.assertEqual(b, before)
