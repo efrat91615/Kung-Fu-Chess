@@ -216,8 +216,52 @@ class TestGameOverStopsClicks:
 
 
 # ===========================================================================
-# GameEngine.handle_click still delegates correctly (integration point)
+# handle_click return value (bool: True = move queued, False = everything else)
 # ===========================================================================
+
+class TestHandleClickReturnValue:
+    def test_returns_true_when_move_is_queued(self):
+        board = TextBoard(["wR . ."])
+        engine, ctrl, state = _controller(board, move_duration=1000)
+        ctrl.handle_click(state, 50, 50)            # select
+        result = ctrl.handle_click(state, 250, 50)  # legal move
+        assert result is True
+
+    def test_returns_false_on_illegal_move(self):
+        board = TextBoard(["wR bP ."])
+        engine, ctrl, state = _controller(board)
+        ctrl.handle_click(state, 50, 50)            # select
+        result = ctrl.handle_click(state, 250, 50)  # blocked
+        assert result is False
+
+    def test_returns_false_on_first_click_selection(self):
+        engine, ctrl, state = _controller(TextBoard(["wK . ."]))
+        result = ctrl.handle_click(state, 0, 0)     # just a selection
+        assert result is False
+
+    def test_returns_false_on_empty_cell_click(self):
+        engine, ctrl, state = _controller(TextBoard([". . ."]))
+        result = ctrl.handle_click(state, 100, 0)
+        assert result is False
+
+    def test_returns_false_on_friendly_reselect(self):
+        board = TextBoard(["wK wR ."])
+        engine, ctrl, state = _controller(board)
+        ctrl.handle_click(state, 0, 0)              # select wK
+        result = ctrl.handle_click(state, 100, 0)   # reselect wR
+        assert result is False
+
+    def test_returns_false_when_game_over(self):
+        board = TextBoard(["wR . .", "bK . ."])
+        engine, ctrl, state = _controller(board, move_duration=1000)
+        ctrl.handle_click(state, 50, 50)
+        ctrl.handle_click(state, 50, 150)
+        engine.tick(state, 1000)
+        assert state.game_over
+        result = ctrl.handle_click(state, 0, 0)
+        assert result is False
+
+
 
 class TestGameEngineDelegatesToController:
     def test_engine_handle_click_uses_its_own_controller(self):

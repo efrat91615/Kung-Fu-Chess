@@ -67,21 +67,23 @@ class ClickController:
         self._mapper = mapper
         self.selection: Position | None = None
 
-    def handle_click(self, state: "GameState", x: int, y: int) -> None:
+    def handle_click(self, state: "GameState", x: int, y: int) -> bool:
+        """Process a click.  Returns True if a move was successfully queued,
+        False for every other outcome (no-op, selection, invalid move)."""
         if state.game_over:
-            return
+            return False
 
         pos = self._mapper.pixel_to_cell(x, y)
         board = state.board
         if not board.contains(pos):
-            return
+            return False
 
         clicked_piece = board.get_piece_at(pos)
 
         if self.selection is None:
             if clicked_piece != "." and self._engine.is_selectable(state, pos):
                 self.selection = pos
-            return
+            return False
 
         selected_piece = board.get_piece_at(self.selection)
 
@@ -90,10 +92,12 @@ class ClickController:
         if clicked_piece != "." and same_color(selected_piece, clicked_piece):
             if self._engine.is_selectable(state, pos):
                 self.selection = pos
-            return
+            return False
 
         # Anything else — empty cell or enemy piece — is a move attempt.
         # This controller does not decide whether it's legal; it just
         # forwards it and clears the selection no matter the outcome.
-        self._engine.attempt_move(state, self.selection, pos)
+        from_pos = self.selection
+        queued = self._engine.attempt_move(state, from_pos, pos)
         self.selection = None
+        return queued

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
 import cv2
+import numpy as np
 
 from asset_loader import AssetLoader
 from core.models import Position
@@ -14,8 +15,14 @@ from piece_view import PieceView
 
 if TYPE_CHECKING:
     from engine.snapshot import BoardSnapshot, GameSnapshot
+    from ui.ui_state import UIState
 
 BOARD_PATH = REPO_ROOT / "assets" / "board.png"
+
+# Overlay colours (BGR)
+_SELECTION_COLOR = (0, 220, 0)      # green
+_ERROR_COLOR     = (0, 0, 220)      # red
+_OVERLAY_ALPHA   = 0.35
 
 
 class GraphicsBoardRenderer:
@@ -48,7 +55,12 @@ class GraphicsBoardRenderer:
         # contains such characters (e.g. this one).
         self._board_template = Img().read(BOARD_PATH)
 
-    def render(self, game_snapshot: "GameSnapshot", window_img: Img) -> None:
+    def render(
+        self,
+        game_snapshot: "GameSnapshot",
+        window_img: Img,
+        ui_state: "Optional[UIState]" = None,
+    ) -> None:
         window_img.img = self._board_template.img.copy()
 
         self._sync_piece_views(game_snapshot.board)
@@ -57,10 +69,6 @@ class GraphicsBoardRenderer:
         for position, view in self._piece_views.items():
             frame = view.get_current_frame()
 
-            # Sprites are stored at their native resolution, which does
-            # not generally match the board's cell size, so scale a
-            # copy rather than mutating (and thereby corrupting) the
-            # cached frame that other cells/renders will reuse.
             scaled = Img()
             scaled.img = cv2.resize(
                 frame.img, (cell_size, cell_size), interpolation=cv2.INTER_AREA
@@ -68,6 +76,53 @@ class GraphicsBoardRenderer:
 
             x, y = self._mapper.cell_to_pixel(position.row, position.col)
             scaled.draw_on(window_img, x, y)
+
+        if ui_state is not None:
+            self._draw_overlays(window_img, ui_state, cell_size)
+
+        if game_snapshot.game_over:
+            self._draw_game_over(window_img, game_snapshot)
+
+    def _draw_overlays(self, window_img: Img, ui_state: "UIState", cell_size: int) -> None:
+        if ui_state.selected_pos is not None:
+            self._tint_cell(window_img, ui_state.selected_pos, _SELECTION_COLOR, cell_size)
+
+        if ui_state.error_flash is not None:
+            pos, _ = ui_state.error_flash
+            self._tint_cell(window_img, pos, _ERROR_COLOR, cell_size)
+
+    def _tint_cell(
+        self, window_img: Img, pos: Position, color: tuple, cell_size: int
+    ) -> None:
+        x, y = self._mapper.cell_to_pixel(pos.row, pos.col)
+        overlay = window_img.img.copy()
+        cv2.rectangle(overlay, (x, y), (x + cell_size, y + cell_size), color, -1)
+        cv2.addWeighted(overlay, _OVERLAY_ALPHA, window_img.img, 1 - _OVERLAY_ALPHA, 0, window_img.img)
+        cv2.rectangle(window_img.img, (x, y), (x + cell_size, y + cell_size), color, 3)
+
+    def _draw_game_over(self, window_img: Img, game_snapshot: "GameSnapshot") -> None:
+        h, w = window_img.img.shape[:2]
+        overlay = window_img.img.copy()
+        cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.55, window_img.img, 0.45, 0, window_img.img)
+
+        winner = game_snapshot.winner
+        if winner is not None:
+            label = f"{winner.value.upper()} WINS"
+            color = (255, 255, 255) if winner.value == "w" else (80, 80, 255)
+        else:
+            label = "DRAW"
+            color = (200, 200, 200)
+
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = w / 400
+        thickness = max(2, int(scale * 2))
+        (tw, th), _ = cv2.getTextSize(label, font, scale, thickness)
+        cv2.putText(
+            window_img.img, label,
+            ((w - tw) // 2, (h + th) // 2),
+            font, scale, color, thickness, cv2.LINE_AA,
+        )
 
     def _sync_piece_views(self, board: "BoardSnapshot") -> None:
         """Rebuild ``_piece_views`` for *board*'s current occupancy.

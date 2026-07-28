@@ -3,9 +3,6 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
 GRAPHICS_DIR = REPO_ROOT / "ui" / "graphics"
-# asset_loader.py / img.py / graphics_board_renderer.py import each other as
-# flat sibling modules (e.g. `from img import Img`), which only resolves if
-# their own directory is on sys.path.
 sys.path.insert(0, str(GRAPHICS_DIR))
 
 import time
@@ -22,6 +19,7 @@ from engine.game_state import GameState
 from engine.snapshot import GameSnapshot
 from input.board_mapper import BoardMapper
 from logger_config import setup_logging
+from ui.ui_state import UIState
 
 ASSETS_ROOT = REPO_ROOT / "assets"
 BOARD_PATH = ASSETS_ROOT / "board.png"
@@ -55,6 +53,7 @@ def main():
 
     engine = GameEngine(board, mapper=mapper)
     state = GameState(board=board)
+    ui = UIState()
 
     asset_loader = AssetLoader(PIECES_ROOT)
     renderer = GraphicsBoardRenderer(asset_loader, mapper)
@@ -77,20 +76,31 @@ def main():
         last_time = now
 
         engine.tick(state, elapsed_ms)
+        ui.tick()
 
         for x, y in pending_clicks:
-            engine.handle_click(state, x, y)
+            prev_selection = engine.selection
+            queued = engine.handle_click(state, x, y)
+            # Mirror selection into UIState so the renderer can highlight it.
+            ui.selected_pos = engine.selection
+            # If a move attempt was made (had a selection) but was rejected,
+            # flash the destination cell red.
+            if prev_selection is not None and not queued and engine.selection is None:
+                from input.board_mapper import BoardMapper as _BM
+                clicked_pos = mapper.pixel_to_cell(x, y)
+                if state.board.contains(clicked_pos):
+                    ui.set_error(clicked_pos)
         pending_clicks.clear()
 
-        snapshot = GameSnapshot.from_state(state)
-        renderer.render(snapshot, screen)
+        if state.game_over and ui.winner is None:
+            ui.winner = state.winner
 
-        # Img.show() blocks on cv2.waitKey(0) and tears the window down
-        # right after — incompatible with a continuous render loop, so this
-        # polls cv2 directly instead, same as the rest of this pipeline.
+        snapshot = GameSnapshot.from_state(state)
+        renderer.render(snapshot, screen, ui)
+
         cv2.imshow(WINDOW_NAME, screen.img)
         key = cv2.waitKey(30)
-        if key == ESC or state.game_over or cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+        if key == ESC or cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
             break
     cv2.destroyAllWindows()
 

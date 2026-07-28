@@ -247,7 +247,7 @@ class GameEngine:
     # Game commands
     # ------------------------------------------------------------------
 
-    def handle_click(self, state: GameState, x: int, y: int) -> None:
+    def handle_click(self, state: GameState, x: int, y: int) -> bool:
         """Process a pixel-coordinate click against *state*.
 
         Entirely delegated to ``ClickController``, which owns click
@@ -258,8 +258,11 @@ class GameEngine:
         completes a move queues it as a ``PendingMove`` — the piece
         relocates later, via ``tick()``) and every selection decision
         consults ``is_selectable``; it never decides legality itself.
+
+        Returns True iff a move was successfully queued (mirrors
+        ``ClickController.handle_click``'s return value).
         """
-        self._click_controller.handle_click(state, x, y)
+        return self._click_controller.handle_click(state, x, y)
 
     def is_selectable(self, state: GameState, pos: Position) -> bool:
         """True iff *pos* holds a piece that can currently be selected in *state*.
