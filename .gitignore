@@ -19,6 +19,12 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+*.rar
+*.zip
+
+# Temporary & scratch files
+tmp*.txt
+case_*.txt
 
 # IDE
 .vscode/
